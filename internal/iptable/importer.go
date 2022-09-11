@@ -15,7 +15,7 @@ func ParseImportIpTables(line string) {
 	}
 	if line[0] == ':' {
 		words := strings.Fields(line)
-		currentTable.AddChain(words[0][1:], words[1])
+		currentTable.AddChain(words[0][1:], words[1], currentTable)
 	}
 	if line[:2] == "-A" {
 		cmdArgs := ParseIpTablesCmdString(line)
