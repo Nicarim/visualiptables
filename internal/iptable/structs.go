@@ -90,6 +90,18 @@ type IPRule struct {
 	gotoTarget *IPChain
 }
 
+func (r *IPRule) Protocol() string {
+	return r.protocol
+}
+
+func (r *IPRule) Source() string {
+	return r.source
+}
+
+func (r *IPRule) Destination() string {
+	return r.destination
+}
+
 func (r *IPRule) InInterface() string {
 	if r.inInterface == "" {
 		return "any"
@@ -109,17 +121,18 @@ func (r *IPRule) JumpTarget() *IPChain {
 }
 
 func (r *IPRule) Name() string {
-	str := "IPRule"
-	str += fmt.Sprintf(" table: %s, chain: %s", r.chain.table.name, r.chain.name)
+	var jumpStr string
 	if r.jumpTarget != nil {
 		if r.jumpTarget.special {
-			str += fmt.Sprintf("|Extension Target: %s", r.jumpTarget.name)
+			jumpStr = fmt.Sprintf("Extension Target: %s", r.jumpTarget.name)
 		} else {
-			str += fmt.Sprintf("|Next chain: %s", r.jumpTarget.name)
+			jumpStr = fmt.Sprintf("Next chain: %s", r.jumpTarget.name)
 		}
 	} else {
-		str += fmt.Sprintf("|Stay within chain: %s", r.chain.name)
+		jumpStr = fmt.Sprintf("Stay within chain: %s", r.chain.name)
 	}
+	str := fmt.Sprintf("{%s ⇒|Proto: %s}|{IPRule table: %s, chain: %s|%s|Source: %s}|{%s ⇒|Dest: %s}",
+		r.InInterface(), r.Protocol(), r.chain.table.name, r.chain.name, jumpStr, r.Source(), r.OutInterface(), r.Destination())
 	return str
 }
 
@@ -130,7 +143,7 @@ func (r *IPRule) DotNode(name string, opts *dag.DotOpts) *dag.DotNode {
 			"fillcolor": "beige",
 			"style":     "filled",
 			"shape":     "record",
-			"label":     "⇒" + r.InInterface() + "|" + name + "|" + r.OutInterface() + "⇒",
+			"label":     name,
 		},
 	}
 }
@@ -169,7 +182,11 @@ func (c *IPChain) AddRuleFromImports(currentTable *IPTable, cmdArgs *IpTablesCmd
 }
 
 func (c *IPChain) String() string {
-	return fmt.Sprintf("table: %s, chain: %s", c.table.name, c.name)
+	if c.table != nil {
+		return fmt.Sprintf("table: %s, chain: %s", c.table.name, c.name)
+	}
+	return fmt.Sprintf("chain: %s", c.name)
+
 }
 
 func (c *IPChain) Name() string {

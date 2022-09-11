@@ -126,55 +126,64 @@ func (s *IPRuleSubgraph) DotNode(name string, opts *dag.DotOpts) *dag.DotNode {
 		Name: name,
 		Attrs: map[string]string{
 			"style":     "filled",
-			"fillcolor": "beige",
+			"fillcolor": "brown1",
 		},
 	}
 }
 
-func (t *DeviceUnderTest) SimulatePacket(origin PacketOrigin) {
-	// let's assume we're trying to send ICMP packet one way, without reply
-
-	chains := t.getDefaultFlow(origin)
-	g := &dag.AcyclicGraph{}
-	for i, chain := range chains {
-		g.Add(chain)
-		if i > 0 {
-			previousChain := chains[i-1]
-			rules := previousChain.Rules()
-			gi := &dag.AcyclicGraph{}
-			for j, rule := range rules {
-				gi.Add(rule)
-				jumpTarget := rule.JumpTarget()
-				if jumpTarget != nil {
-					gi.Add(jumpTarget)
-					gi.Connect(dag.BasicEdge(rule, jumpTarget))
-					targetRules := jumpTarget.Rules()
-					if len(targetRules) > 0 {
-						for h, targetRule := range targetRules {
-							gi.Add(targetRule)
-							if h > 0 {
-								gi.Connect(dag.BasicEdge(targetRules[h-1], targetRule))
-							}
-						}
-						gi.Connect(dag.BasicEdge(jumpTarget, targetRules[0]))
-					}
-				}
-				if j > 0 {
-					gi.Connect(dag.BasicEdge(rules[j-1], rule))
-				}
-			}
-			if len(rules) == 0 {
-				g.Connect(dag.BasicEdge(previousChain, chain))
-			} else {
-				subGraph := g.Add(&IPRuleSubgraph{
-					VertexName:   fmt.Sprintf("rules of %s", previousChain.Name()),
-					AcyclicGraph: gi,
-				})
-				g.Connect(dag.BasicEdge(previousChain, subGraph))
-				g.Connect(dag.BasicEdge(subGraph, chain))
-			}
+func rulesProcessor(ch *iptable.IPChain, depth int) *IPRuleSubgraph {
+	rules := ch.Rules()
+	gi := &dag.AcyclicGraph{}
+	for j, rule := range rules {
+		gi.Add(rule)
+		jumpTarget := rule.JumpTarget()
+		if jumpTarget != nil {
+			gi = chainsProcessor(gi, []*iptable.IPChain{jumpTarget}, depth+1)
+		}
+		if j > 0 {
+			gi.Connect(dag.BasicEdge(rules[j-1], rule))
 		}
 	}
+	return &IPRuleSubgraph{
+		VertexName:   fmt.Sprintf("rules of %s", ch.Name()),
+		AcyclicGraph: gi,
+	}
+}
+
+func chainsProcessor(g *dag.AcyclicGraph, chains []*iptable.IPChain, depth int) *dag.AcyclicGraph {
+	var previousVertex dag.Vertex
+	for i, chain := range chains {
+		g.Add(chain)
+		rulesCount := len(chain.Rules())
+		if rulesCount > 0 {
+			rulesDag := rulesProcessor(chain, depth)
+			g.Add(rulesDag)
+			if i > 0 {
+				g.Connect(dag.BasicEdge(previousVertex, chain))
+				g.Connect(dag.BasicEdge(chain, rulesDag))
+			} else {
+				g.Connect(dag.BasicEdge(chain, rulesDag))
+			}
+			previousVertex = rulesDag
+		} else {
+			if i > 0 {
+				g.Connect(dag.BasicEdge(previousVertex, chain))
+			}
+			previousVertex = chain
+		}
+	}
+	return g
+}
+
+func (t *DeviceUnderTest) GenerateDag(origin PacketOrigin) *dag.AcyclicGraph {
+	chains := t.getDefaultFlow(origin)
+	g := &dag.AcyclicGraph{}
+	return chainsProcessor(g, chains, 0)
+}
+
+func (t *DeviceUnderTest) SimulatePacket(origin PacketOrigin) {
+	// let's assume we're trying to send ICMP packet one way, without reply
+	g := t.GenerateDag(origin)
 	dot := g.Dot(&dag.DotOpts{
 		Verbose:    true,
 		DrawCycles: false,
